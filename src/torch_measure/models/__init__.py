@@ -19,6 +19,8 @@ from torch_measure.models.ncf import NCF
 from torch_measure.models.predictive_eval import (
     SmoothedPriorPredictiveEvaluator,
     clip_probability,
+    format_item_text,
+    format_pair_text,
     parse_subject_name,
 )
 from torch_measure.models.rasch import Rasch
@@ -55,5 +57,7 @@ __all__ = [
     "NCF",
     "SmoothedPriorPredictiveEvaluator",
     "clip_probability",
+    "format_item_text",
+    "format_pair_text",
     "parse_subject_name",
 ]

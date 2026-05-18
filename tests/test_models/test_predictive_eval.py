@@ -3,12 +3,31 @@
 from torch_measure.models.predictive_eval import (
     SmoothedPriorPredictiveEvaluator,
     clip_probability,
+    format_item_text,
+    format_pair_text,
     parse_subject_name,
 )
 
 
 def test_parse_subject_name_uses_name_line():
     assert parse_subject_name("Name: StrongModel\nOrganization: Example") == "strongmodel"
+
+
+def test_embedding_text_formatters_are_stable():
+    row = {
+        "benchmark": "mmlupro",
+        "condition": "",
+        "subject_content": "Name: Model",
+        "item_content": "What is 2 + 2?",
+    }
+
+    assert format_item_text(row) == "Benchmark: mmlupro\nCondition: none\nItem: What is 2 + 2?"
+    assert format_pair_text(row) == (
+        "Benchmark: mmlupro\n"
+        "Condition: none\n"
+        "Subject: Name: Model\n"
+        "Item: What is 2 + 2?"
+    )
 
 
 def test_clip_probability_returns_native_float_in_unit_interval():

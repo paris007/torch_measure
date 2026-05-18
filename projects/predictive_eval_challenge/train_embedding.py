@@ -1,0 +1,158 @@
+# Copyright (c) 2026 AIMS Foundations. MIT License.
+
+"""Train an embedding-based predictive evaluator.
+
+The runtime path is small on purpose: at test time the Codabench wrapper only
+needs to encode the hidden item text, append a smoothed subject-mean prior, and
+apply a linear head. The encoder is declared in `models.txt` and pre-fetched by
+the platform; everything else lives in a single `.npz` artifact.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+
+from torch_measure.models import (
+    SmoothedPriorPredictiveEvaluator,
+    format_item_text,
+    parse_subject_name,
+)
+
+
+ENCODER_ID = "sentence-transformers/all-mpnet-base-v2"
+DEFAULT_ARTIFACT_PATH = (
+    "projects/predictive_eval_challenge/"
+    "codabench_submissions/embedding/artifacts/embedding_head.npz"
+)
+
+
+def encode_unique_items(
+    df: pd.DataFrame,
+    model_id: str,
+    batch_size: int = 128,
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Encode each unique item text exactly once and return embeddings plus index."""
+    from sentence_transformers import SentenceTransformer
+
+    unique = df[["item_content", "benchmark", "condition"]].drop_duplicates("item_content")
+    texts = [format_item_text(row) for row in unique.to_dict("records")]
+    encoder = SentenceTransformer(model_id)
+    embeddings = np.asarray(
+        encoder.encode(
+            texts,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            show_progress_bar=True,
+        ),
+        dtype=np.float32,
+    )
+    item_to_row = {
+        str(item): idx for idx, item in enumerate(unique["item_content"].astype(str).values)
+    }
+    return embeddings, item_to_row
+
+
+def build_features(
+    df: pd.DataFrame,
+    item_embeddings: np.ndarray,
+    item_to_row: dict[str, int],
+    subject_means: dict[str, float],
+    global_mean: float,
+) -> np.ndarray:
+    """Concatenate item embeddings with a subject-prior feature."""
+    rows = np.array(
+        [item_to_row[str(item)] for item in df["item_content"].astype(str).values],
+        dtype=np.int64,
+    )
+    embed_features = item_embeddings[rows]
+    subject_prior = np.array(
+        [
+            subject_means.get(parse_subject_name(str(value)), global_mean)
+            for value in df["subject_content"].astype(str).values
+        ],
+        dtype=np.float32,
+    )[:, None]
+    return np.concatenate([embed_features, subject_prior], axis=1)
+
+
+def train_embedding(
+    data_path: str | Path,
+    output_path: str | Path,
+    encoder_id: str = ENCODER_ID,
+    max_rows: int = 1_000_000,
+    seed: int = 321,
+    batch_size: int = 128,
+    C: float = 1.0,
+) -> Path:
+    """Fit the embedding head and save weights as native numpy arrays."""
+    df = pd.read_parquet(data_path)
+    if max_rows and len(df) > max_rows:
+        df = df.sample(n=max_rows, random_state=seed).reset_index(drop=True)
+
+    baseline = SmoothedPriorPredictiveEvaluator.fit(df.to_dict("records"))
+    item_embeddings, item_to_row = encode_unique_items(df, encoder_id, batch_size=batch_size)
+    features = build_features(
+        df,
+        item_embeddings,
+        item_to_row,
+        subject_means=baseline.subject,
+        global_mean=baseline.global_mean,
+    )
+    labels = df["label"].to_numpy(dtype=np.int64)
+
+    scaler = StandardScaler().fit(features)
+    scaled = scaler.transform(features)
+    clf = LogisticRegression(
+        C=C,
+        max_iter=1000,
+        class_weight="balanced",
+        n_jobs=-1,
+    ).fit(scaled, labels)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        output_path,
+        encoder_id=np.array(encoder_id),
+        coef=clf.coef_.astype(np.float32),
+        intercept=clf.intercept_.astype(np.float32),
+        scaler_mean=scaler.mean_.astype(np.float32),
+        scaler_scale=scaler.scale_.astype(np.float32),
+        global_mean=np.array(baseline.global_mean, dtype=np.float32),
+        subject_names=np.array(list(baseline.subject.keys())),
+        subject_values=np.array(list(baseline.subject.values()), dtype=np.float32),
+    )
+    return output_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", required=True, help="Joined runtime examples parquet.")
+    parser.add_argument("--out", default=DEFAULT_ARTIFACT_PATH)
+    parser.add_argument("--encoder-id", default=ENCODER_ID)
+    parser.add_argument("--max-rows", type=int, default=1_000_000)
+    parser.add_argument("--seed", type=int, default=321)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--C", type=float, default=1.0)
+    args = parser.parse_args()
+
+    output_path = train_embedding(
+        args.data,
+        args.out,
+        encoder_id=args.encoder_id,
+        max_rows=args.max_rows,
+        seed=args.seed,
+        batch_size=args.batch_size,
+        C=args.C,
+    )
+    print(f"wrote {output_path}")
+
+
+if __name__ == "__main__":
+    main()

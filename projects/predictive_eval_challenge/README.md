@@ -39,6 +39,7 @@ projects/predictive_eval_challenge/
   data_loading.py
   download_data.py
   train_baseline.py
+  train_embedding.py
   validate.py
   smoke_submission.py
   make_submission.py
@@ -85,6 +86,25 @@ The built ZIP is written to:
 projects/predictive_eval_challenge/dist/baseline_submission.zip
 ```
 
+## Local Embedding Workflow
+
+The embedding pipeline encodes each unique item text with
+`sentence-transformers/all-mpnet-base-v2`, appends a smoothed subject-mean
+prior, and fits a logistic head. Weights are saved as plain numpy arrays so
+the Codabench wrapper does not need scikit-learn at runtime.
+
+```bash
+$PYTHON projects/predictive_eval_challenge/train_embedding.py \
+  --data projects/predictive_eval_challenge/data/runtime_examples.parquet \
+  --max-rows 1000000
+$PYTHON projects/predictive_eval_challenge/smoke_submission.py \
+  projects/predictive_eval_challenge/codabench_submissions/embedding
+$PYTHON projects/predictive_eval_challenge/make_submission.py embedding
+```
+
+The embedding submission declares the encoder in `models.txt`, so the
+Codabench platform pre-fetches it before importing `model.py`.
+
 ## Schmidt Slurm Workflow
 
 Submit the baseline job from the repository root:
@@ -93,8 +113,15 @@ Submit the baseline job from the repository root:
 sbatch projects/predictive_eval_challenge/slurm/train_baseline.sbatch
 ```
 
-The job uses the `cs321m` partition and QoS, downloads the public data, trains
-the baseline artifact, smoke-tests the submission folder, and builds the ZIP.
+Submit the embedding job from the repository root:
+
+```bash
+sbatch projects/predictive_eval_challenge/slurm/train_embedding.sbatch
+```
+
+The embedding job requests a GPU (`--gres=gpu:1`) for sentence-transformer
+encoding and reuses the cached parquet from the baseline job if it exists.
+Both jobs use the `cs321m` partition and QoS.
 
 ## Tests
 

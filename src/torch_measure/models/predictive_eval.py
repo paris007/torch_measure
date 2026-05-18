@@ -28,6 +28,25 @@ def parse_subject_name(subject_content: str) -> str:
     return (subject_content or "").strip().lower()
 
 
+def format_item_text(input: InputRow) -> str:
+    """Format benchmark, condition, and item content for item-side embeddings."""
+    return (
+        f"Benchmark: {input.get('benchmark', '')}\n"
+        f"Condition: {input.get('condition', 'none') or 'none'}\n"
+        f"Item: {input.get('item_content', '')}"
+    )
+
+
+def format_pair_text(input: InputRow) -> str:
+    """Format all runtime input fields for pair-level embedding or acquisition."""
+    return (
+        f"Benchmark: {input.get('benchmark', '')}\n"
+        f"Condition: {input.get('condition', 'none') or 'none'}\n"
+        f"Subject: {input.get('subject_content', '')}\n"
+        f"Item: {input.get('item_content', '')}"
+    )
+
+
 def _key(*parts: object) -> str:
     return "||".join(str(part) for part in parts)
 
