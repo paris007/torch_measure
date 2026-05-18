@@ -16,6 +16,11 @@ from torch_measure.models.logistic_fm import LogisticFM
 from torch_measure.models.multifacet import MultiFacetRasch
 from torch_measure.models.multifacet_twopl import MultiFacet2PL
 from torch_measure.models.ncf import NCF
+from torch_measure.models.predictive_eval import (
+    SmoothedPriorPredictiveEvaluator,
+    clip_probability,
+    parse_subject_name,
+)
 from torch_measure.models.rasch import Rasch
 from torch_measure.models.rotation import bifactor_rotation, promax_rotation, varimax_rotation
 from torch_measure.models.testlet import TestletRasch, build_testlet_map
@@ -48,4 +53,7 @@ __all__ = [
     "promax_rotation",
     "bifactor_rotation",
     "NCF",
+    "SmoothedPriorPredictiveEvaluator",
+    "clip_probability",
+    "parse_subject_name",
 ]
