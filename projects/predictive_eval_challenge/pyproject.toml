@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cs321m-predictive-eval"
+version = "0.1.0"
+description = "CS321M Predictive AI Evaluation Challenge — training, evaluation, and Codabench submissions."
+requires-python = ">=3.10"
+readme = "README.md"
+
+[tool.setuptools]
+py-modules = [
+    "data_loading",
+    "download_data",
+    "train_baseline",
+    "train_embedding",
+    "train_factor",
+    "fit_richer_baseline",
+    "recalibrate_temperature",
+    "eval_ensemble",
+    "eval_baseline_variants",
+    "per_benchmark_diag",
+    "make_submission",
+    "smoke_submission",
+    "validate",
+    "local_cv",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

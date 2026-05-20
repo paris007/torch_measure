@@ -29,7 +29,12 @@ def make_submission(name: str, out_dir: str | Path | None = None) -> Path:
         for path in sorted(submission_dir.rglob("*")):
             if path.is_dir():
                 continue
-            if "__pycache__" in path.parts or path.name.endswith(".pyc") or path.name == ".gitkeep":
+            if (
+                "__pycache__" in path.parts
+                or path.name.endswith(".pyc")
+                or path.name == ".gitkeep"
+                or path.name == ".DS_Store"
+            ):
                 continue
             archive.write(path, path.relative_to(submission_dir))
 
@@ -38,7 +43,16 @@ def make_submission(name: str, out_dir: str | Path | None = None) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("name", choices=["baseline", "embedding", "factor_pge"])
+    parser.add_argument(
+        "name",
+        choices=[
+            "baseline",
+            "embedding",
+            "factor_pge",
+            "factor_baseline_ensemble",
+            "factor_pge_multiseed",
+        ],
+    )
     parser.add_argument("--out-dir", default=str(PROJECT_DIR / "dist"))
     args = parser.parse_args()
 
