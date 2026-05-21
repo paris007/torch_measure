@@ -17,6 +17,7 @@
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage{tabularx}
+\usepackage{longtable}
 
 \title{Predictive AI Evaluation Challenge: Cold-Start Probability Modeling with Adaptive Calibration}
 
@@ -57,6 +58,9 @@ For local validation I used whole-benchmark and benchmark-aware holdouts rather 
 
 \section{Methods}
 
+\paragraph{Engineering baseline and defensive runtime.}
+Before modeling, I fixed several submission-level issues that materially affected runtime reliability. The item text distribution is heavy-tailed: the median item has about 300 characters, but the longest public item is about 25k characters. Batching those texts without truncation made sentence embedding slow because one long item pads the whole batch. I therefore truncated item strings consistently during training and inference and capped the encoder sequence length. I also fixed a Codabench-specific NumPy 2 issue: locally, \texttt{float()} on a one-element two-dimensional array only warned, but on Codabench it raised a \texttt{TypeError}. The final wrappers use explicit scalar extraction, string-normalized keys, finite-probability clipping, and broad fallback paths so a single malformed input cannot crash a submission.
+
 \paragraph{Smoothed-prior baseline.}
 The simplest useful model estimates empirical correctness rates at several granularities and shrinks each cell toward a parent mean. The final prior uses the hierarchy
 \[
@@ -70,27 +74,27 @@ The simplest useful model estimates empirical correctness rates at several granu
 \rightarrow
 \text{global}.
 \]
-The first baseline averaged several cells. A stronger v2 baseline preferred the deepest populated cell, especially subject-benchmark-condition, with Bayesian shrinkage toward coarser cells. This improved local cold-start NLL substantially and became the backbone of the best submissions.
+The first baseline averaged several cells and scored about $-0.64$ hidden log-loss. A stronger v2 baseline preferred the deepest populated cell, especially subject-benchmark-condition, with Bayesian shrinkage toward coarser cells. This improved local NLL dramatically, but hidden Codabench revealed that the finest cells were less stable under distribution shift than local validation suggested. The final robust prior router therefore blended older and newer prior families instead of trusting the deepest cell unconditionally.
 
 \paragraph{Embedding head.}
-I trained a content-based head using SentenceTransformer item embeddings plus smoothed subject priors. The runtime artifact stores plain NumPy weights so that the submission does not require scikit-learn at inference. This approach underperformed the smoothed prior on Codabench, suggesting that item topic embeddings alone did not generalize well enough to hidden item difficulty.
+I trained a content-based head using SentenceTransformer item embeddings plus smoothed subject priors. The first version used MiniLM item embeddings and \texttt{class\_weight=balanced}; it had strong in-sample diagnostics (NLL about 0.557, AUC about 0.788) but hidden score only $-0.64$, indicating calibration and cold-start mismatch. I then removed class balancing and added a subject embedding interaction, concatenating item embedding, subject prior, and the subject's mean embedding profile. This made the smoke-test prediction much better calibrated to the public base rate, but hidden performance dropped to $-0.69$. The lesson was that raw text embeddings and subject-conditioned item averages overfit public benchmark structure.
 
 \paragraph{Factor/PGE model.}
 I implemented a three-stage prediction-guided-evaluation pipeline: first fit a rank-1 item-response/factor model with subject ability $\theta_s$ and item parameters $(a_i,b_i)$; then train an MLP from MiniLM item embeddings to item parameters; finally predict
 \[
   \sigma((a_i\theta_s-b_i)/T)
 \]
-for cold-start items. Temperature $T$ was fit on a cold-start holdout. Higher-rank factor models, larger encoders, and multi-seed variants reduced some local losses but did not improve hidden performance.
+for cold-start items. The first factor model trained on 500k rows and scored $-0.61$ with AUC 0.70, the first submission with clear discriminative signal. I then expanded to roughly 1.9M rows, a two-layer 256-unit MLP, theta weight decay, and temperature calibration. Local held-out NLL improved sharply after fitting $T=0.275$, but hidden performance regressed in several calibrated variants. Multi-seed MiniLM ensembling, MPNet/BGE-style larger-encoder experiments on Modal, and bigger MLPs reduced some validation losses but did not beat the simpler robust prior family on hidden Codabench.
 
-\paragraph{Robust prior router.}
-The best family was a robust prior-only router between the older v1 weighted prior and the deeper v2 prior. Without labels, it uses a conservative default blend. With revealed labels, it compares the v1 and v2 priors on the labeled examples for the current benchmark-condition category and softly shifts the logit-space blend toward the better prior. A separate clipped logit blend shrinks predictions toward the observed mean of the revealed labels for that category.
+\paragraph{Factor/prior ensembles and robust prior router.}
+The factor model and smoothed priors made different mistakes, so I built logit-space ensembles. A global 70/30 factor/prior ensemble tied the $-0.61$ range, but per-benchmark routing based on local diagnostics overfit badly: benchmarks where the public baseline looked dominant did not map cleanly to hidden evaluation. The best final family was a robust prior-only router between the older v1 weighted prior and the deeper v2 prior. Without labels, it uses a conservative default blend. With revealed labels, it compares the v1 and v2 priors on labeled examples for the current category and softly shifts the logit-space blend toward the better prior. A separate clipped logit blend shrinks predictions toward the observed mean of the revealed labels for that category.
 
 \paragraph{Adaptive acquisition.}
-The acquisition function must never fail: any exception or non-finite score triggers random fallback for the entire round. I therefore used simple deterministic scoring based on prior uncertainty and stable hashing. Attempts at hash-only, diversity-tiered, v1/v2 disagreement, and stronger label-correction acquisition did not improve hidden performance.
+The acquisition function must never fail: any exception or non-finite score triggers random fallback for the entire round. I tried length-biased acquisition, uniform stable hashing, uncertainty/entropy, v1/v2 disagreement, diversity tiers, and category-aware variants. Length bias was harmful because it selected long code/math items whose revealed labels were systematically harder than the rest of the category; applying those residuals globally pulled many predictions down. The most robust submissions use simple deterministic uncertainty or hash selection and clipped adaptive calibration.
 
 \section{Experiments and Ablations}
 
-Table~\ref{tab:history} summarizes the most important Codabench results. The best score was $-0.61$, reached by several conservative prior-family submissions. Larger or more aggressive variants generally worsened hidden log-loss.
+Table~\ref{tab:history} summarizes the main Codabench results. The best score was $-0.61$, reached by several conservative prior-family submissions. Larger or more aggressive variants generally worsened hidden log-loss. Appendix~\ref{app:iteration-log} gives the fuller iteration log from the development transcript.
 
 \begin{table}[t]
 \centering
@@ -99,14 +103,15 @@ Table~\ref{tab:history} summarizes the most important Codabench results. The bes
 \toprule
 \textbf{Submission} & \textbf{NLL} & \textbf{AUC} & \textbf{Interpretation} \\
 \midrule
-\texttt{robust\_prior\_v1} & $-0.61$ & -- & Conservative v1-heavy prior; tied best. \\
-\texttt{robust\_prior\_v2} & $-0.61$ & -- & Deeper v2 prior blend; tied best. \\
-\texttt{robust\_direct\_residual\_w15} & $-0.61$ & -- & Tiny learned residual blend; tied best but did not beat prior. \\
-\texttt{robust\_prior\_clip} & $-0.62$ & -- & Smaller label correction hurt. \\
-\texttt{robust\_hash} & $-0.62$ & -- & Hash-only acquisition worse than uncertainty. \\
+\texttt{baseline} / \texttt{embedding v1} & $-0.64$ & -- & Early prior and class-balanced MiniLM head plateaued. \\
+\texttt{embedding v2} & $-0.69$ & -- & Subject-embedding interaction overfit cold-start distribution. \\
+\texttt{factor\_pge v1} & $-0.61$ & 0.70 & 2-PL factor model gave the strongest AUC signal. \\
+\texttt{factor\_baseline\_ensemble} & $-0.61$--$-0.62$ & 0.69 & Helpful when conservative; per-category routing overfit. \\
+\texttt{robust\_prior\_v1/v2} & $-0.61$ & 0.68 & Conservative prior router; best leaderboard entry. \\
+\texttt{robust\_prior\_clip/hash/diverse} & $-0.62$ & -- & Acquisition and label-blend ablations. \\
 \texttt{robust\_prior\_v2\_w60} & $-0.63$ & -- & Higher v2 weight looked good locally but overfit hidden data. \\
-\texttt{robust\_direct\_residual} & $-0.64$ & -- & Learned residual overfit when trusted more. \\
-\texttt{robust\_mpnet} & $-0.65$ & -- & Larger encoder/factor model did not generalize. \\
+\texttt{robust\_direct\_residual\_w15} & $-0.61$ & -- & Tiny learned residual tied best; larger residual weights hurt. \\
+\texttt{robust\_mpnet} & $-0.65$ & -- & Larger encoder/factor artifact did not generalize. \\
 \bottomrule
 \end{tabularx}
 \caption{Selected Codabench results. Scores are reported as negative log-loss, so less negative is better. The leaderboard screenshot for username \texttt{parism} shows best score $-0.61$ and AUC $0.68$.}
@@ -121,7 +126,7 @@ The strongest failure mode was hidden-distribution mismatch. Public-data validat
 
 The second failure mode was learned residual overfitting. A Modal-trained direct residual MLP had very strong calibration performance on a held-out public slice, but hidden performance worsened as soon as the residual received substantial weight. A 15\% blend tied the best score; 5\%, 35\%, and 55\% were worse. This indicates that the residual contains some signal but is not reliable enough to carry the prediction.
 
-The final lesson is that this challenge rewards robust, boring probability estimation. The winning path for my submission was not a larger encoder or more expressive model, but a conservative prior hierarchy, defensive runtime code, stable adaptive acquisition, and clipped label-based calibration.
+The third failure mode was adaptive-label selection bias. Selecting the longest items produced revealed labels concentrated in hard coding/math categories. A global offset then applied those hard-item residuals to unrelated predictions. Per-category offsets also overfit because $K=5$ labels are too few to estimate a stable category correction without heavy shrinkage. The final lesson is that this challenge rewards robust, boring probability estimation. The winning path for my submission was not a larger encoder or more expressive model, but a conservative prior hierarchy, defensive runtime code, stable adaptive acquisition, and clipped label-based calibration.
 
 \section{Reproducibility}
 
@@ -149,5 +154,50 @@ Nils Reimers and Iryna Gurevych.
 \newblock In \emph{EMNLP}, 2019.
 
 \end{thebibliography}
+
+\appendix
+\section{Iteration Log}
+\label{app:iteration-log}
+
+This appendix records the broader development trail so the report reflects the full set of attempted methods, including variants that were not part of the final recommended submission. Scores are hidden Codabench negative log-loss when reported; higher is better.
+
+\begin{longtable}{@{}p{0.23\textwidth}p{0.12\textwidth}p{0.59\textwidth}@{}}
+\toprule
+\textbf{Method / artifact} & \textbf{Score} & \textbf{Purpose and outcome} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Method / artifact} & \textbf{Score} & \textbf{Purpose and outcome} \\
+\midrule
+\endhead
+\texttt{embedding\_submission v1} & $-0.64$ & MiniLM item embeddings plus subject prior, class-balanced logistic head. Strong in-sample NLL/AUC did not transfer to hidden cold-start items. \\
+\texttt{baseline\_submission v1} & $-0.64$ & Smoothed empirical prior. Showed that calibration and adaptive offsets alone explain much of the early performance. \\
+\texttt{embedding\_submission v2} & $-0.69$ & Removed class balancing and added subject embedding interaction. Better smoke-test calibration but much worse hidden generalization. \\
+\texttt{factor\_pge v1} & $-0.61$ & 2-PL factor model trained on 500k rows; MLP maps item text embeddings to factor item parameters. First model with AUC about 0.70. \\
+\texttt{factor\_pge v2} & $-0.62$ & More rows, deeper MLP, theta regularization, and temperature calibration. Local NLL looked near leader level but hidden score regressed. \\
+\texttt{factor\_baseline\_ensemble} & $-0.61$--$-0.66$ & Logit blend of factor and prior. Conservative versions tied best; per-category offsets and over-routed versions degraded sharply. \\
+\texttt{factor\_pge\_multiseed} & $-0.62$ & Modal-trained multi-seed MiniLM factor ensemble. Variance reduction was real locally but too small on hidden data. \\
+\texttt{bge/mpnet factor variants} & $-0.65$ & Larger encoder experiments. Better embedding capacity did not fix hidden calibration and sometimes worsened it. \\
+\texttt{robust\_ensemble} & $-0.61$ & New-project robust ensemble baseline; preserved good prior behavior without overwriting earlier ZIPs. \\
+\texttt{robust\_hash} & $-0.62$ & Hash-only acquisition ablation. Stable and simple, but less effective than uncertainty/prior-aware choices. \\
+\texttt{robust\_offset} & $-0.63$ & Stronger offset calibration. Demonstrated that adaptive labels can hurt when residuals are too aggressively reused. \\
+\texttt{robust\_diverse} & $-0.62$ & Diversity-tiered acquisition. Did not beat the conservative prior family. \\
+\texttt{robust\_multiseed} & $-0.62$ & Multi-seed robust/factor variant. Similar to other factor ensembles: small local benefit, no hidden breakthrough. \\
+\texttt{robust\_mpnet} & $-0.65$ & MPNet-based larger encoder artifact. Hidden performance worsened, reinforcing that encoder size was not the main bottleneck. \\
+\texttt{robust\_prior} & $-0.61$--$-0.62$ & Conservative prior router with adaptive label blend. Tied best in one upload, later repeated at $-0.62$. \\
+\texttt{robust\_prior\_v1} & $-0.61$ & Best archived submission by leaderboard ID 743892; v1-heavy prior blend. \\
+\texttt{robust\_prior\_v2} & $-0.61$ & Deeper prior blend; tied best but was sensitive to increasing its default weight. \\
+\texttt{robust\_prior\_clip} & $-0.62$ & Smaller/clipped label correction. Safer, but did not improve hidden NLL. \\
+\texttt{robust\_prior\_v2\_w60} & $-0.63$ & Higher v2 default weight. Local simulator preferred it, hidden data rejected it. \\
+\texttt{robust\_direct\_residual} & $-0.64$ & Learned residual MLP blended at moderate weight. Strong public held-out loss, hidden overfit. \\
+\texttt{robust\_direct\_residual\_w05} & $-0.62$ & Very small residual blend. Less damaging than larger blends but below best. \\
+\texttt{robust\_direct\_residual\_w15} & $-0.61$ & Small residual blend tied best; suggests weak useful residual signal. \\
+\texttt{robust\_direct\_residual\_w55} & $-0.65$ & Large residual blend. Confirmed that trusting the learned residual too much overfits. \\
+\bottomrule
+\end{longtable}
+
+\section{Implementation Notes}
+
+The final project also includes reproducibility and safety infrastructure: \texttt{tests/test\_submissions\_robustness.py} checks that each submission returns finite probabilities and handles malformed inputs; \texttt{make\_submission.py} builds flat Codabench ZIPs and avoids accidental overwrites unless forced; \texttt{dist/submission\_log.md} tracks uploaded artifacts and scores; and Modal scripts were used for larger encoder, residual, and multi-seed experiments under the \texttt{pardis-stanford} workspace.
 
 \end{document}
