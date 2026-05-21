@@ -130,11 +130,9 @@ The third failure mode was adaptive-label selection bias. Selecting the longest 
 
 \section{Reproducibility}
 
-The code is available at:
-\[
-\text{\url{https://github.com/paris007/torch_measure/tree/predictive-eval-challenge}}.
-\]
-The final Codabench-ready directories live under \texttt{codabench\_submissions/}; \texttt{make\_submission.py} builds flat ZIP archives with \texttt{model.py} at the archive root. The best submitted artifact for archival purposes is \texttt{dist/robust\_prior\_v1\_submission.zip}; the best leaderboard entry is username \texttt{parism}, score $-0.61$, submission ID 743892.
+\begin{flushleft}
+The code is available at \url{https://github.com/paris007/torch_measure/tree/predictive-eval-challenge}. The final Codabench-ready directories live under \texttt{codabench\_submissions/}; \texttt{make\_submission.py} builds flat ZIP archives with \texttt{model.py} at the archive root. The best submitted artifact for archival purposes is \texttt{robust\_prior\_v1\_submission.zip}; the best leaderboard entry is username \texttt{parism}, score $-0.61$, submission ID 743892.
+\end{flushleft}
 
 \appendix
 \section{Iteration Log}
@@ -142,7 +140,8 @@ The final Codabench-ready directories live under \texttt{codabench\_submissions/
 
 This appendix records the broader development trail so the report reflects the full set of attempted methods, including variants that were not part of the final recommended submission. Scores are hidden Codabench negative log-loss when reported; higher is better.
 
-\begin{longtable}{@{}p{0.23\textwidth}p{0.12\textwidth}p{0.59\textwidth}@{}}
+\small
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.25\textwidth}>{\raggedright\arraybackslash}p{0.14\textwidth}>{\raggedright\arraybackslash}p{0.55\textwidth}@{}}
 \toprule
 \textbf{Method / artifact} & \textbf{Score} & \textbf{Purpose and outcome} \\
 \midrule
@@ -151,34 +150,25 @@ This appendix records the broader development trail so the report reflects the f
 \textbf{Method / artifact} & \textbf{Score} & \textbf{Purpose and outcome} \\
 \midrule
 \endhead
-\texttt{embedding\_submission v1} & $-0.64$ & MiniLM item embeddings plus subject prior, class-balanced logistic head. Strong in-sample NLL/AUC did not transfer to hidden cold-start items. \\
-\texttt{baseline\_submission v1} & $-0.64$ & Smoothed empirical prior. Showed that calibration and adaptive offsets alone explain much of the early performance. \\
-\texttt{embedding\_submission v2} & $-0.69$ & Removed class balancing and added subject embedding interaction. Better smoke-test calibration but much worse hidden generalization. \\
-\texttt{factor\_pge v1} & $-0.61$ & 2-PL factor model trained on 500k rows; MLP maps item text embeddings to factor item parameters. First model with AUC about 0.70. \\
-\texttt{factor\_pge v2} & $-0.62$ & More rows, deeper MLP, theta regularization, and temperature calibration. Local NLL looked near leader level but hidden score regressed. \\
-\texttt{factor\_baseline\_ensemble} & $-0.61$--$-0.66$ & Logit blend of factor and prior. Conservative versions tied best; per-category offsets and over-routed versions degraded sharply. \\
-\texttt{factor\_pge\_multiseed} & $-0.62$ & Modal-trained multi-seed MiniLM factor ensemble. Variance reduction was real locally but too small on hidden data. \\
-\texttt{bge/mpnet factor variants} & $-0.65$ & Larger encoder experiments. Better embedding capacity did not fix hidden calibration and sometimes worsened it. \\
-\texttt{robust\_ensemble} & $-0.61$ & New-project robust ensemble baseline; preserved good prior behavior without overwriting earlier ZIPs. \\
-\texttt{robust\_hash} & $-0.62$ & Hash-only acquisition ablation. Stable and simple, but less effective than uncertainty/prior-aware choices. \\
-\texttt{robust\_offset} & $-0.63$ & Stronger offset calibration. Demonstrated that adaptive labels can hurt when residuals are too aggressively reused. \\
-\texttt{robust\_diverse} & $-0.62$ & Diversity-tiered acquisition. Did not beat the conservative prior family. \\
-\texttt{robust\_multiseed} & $-0.62$ & Multi-seed robust/factor variant. Similar to other factor ensembles: small local benefit, no hidden breakthrough. \\
-\texttt{robust\_mpnet} & $-0.65$ & MPNet-based larger encoder artifact. Hidden performance worsened, reinforcing that encoder size was not the main bottleneck. \\
-\texttt{robust\_prior} & $-0.61$--$-0.62$ & Conservative prior router with adaptive label blend. Tied best in one upload, later repeated at $-0.62$. \\
-\texttt{robust\_prior\_v1} & $-0.61$ & Best archived submission by leaderboard ID 743892; v1-heavy prior blend. \\
-\texttt{robust\_prior\_v2} & $-0.61$ & Deeper prior blend; tied best but was sensitive to increasing its default weight. \\
-\texttt{robust\_prior\_clip} & $-0.62$ & Smaller/clipped label correction. Safer, but did not improve hidden NLL. \\
-\texttt{robust\_prior\_v2\_w60} & $-0.63$ & Higher v2 default weight. Local simulator preferred it, hidden data rejected it. \\
-\texttt{robust\_direct\_residual} & $-0.64$ & Learned residual MLP blended at moderate weight. Strong public held-out loss, hidden overfit. \\
-\texttt{robust\_direct\_residual\_w05} & $-0.62$ & Very small residual blend. Less damaging than larger blends but below best. \\
-\texttt{robust\_direct\_residual\_w15} & $-0.61$ & Small residual blend tied best; suggests weak useful residual signal. \\
-\texttt{robust\_direct\_residual\_w55} & $-0.65$ & Large residual blend. Confirmed that trusting the learned residual too much overfits. \\
+Embedding v1 & $-0.64$ & MiniLM item embeddings plus subject prior, class-balanced logistic head. Strong in-sample NLL/AUC did not transfer to hidden cold-start items. \\
+Prior baseline v1 & $-0.64$ & Smoothed empirical prior. Showed that calibration and adaptive offsets alone explained much of the early performance. \\
+Embedding v2 & $-0.69$ & Removed class balancing and added subject embedding interaction. Better smoke-test calibration, worse hidden generalization. \\
+Factor/PGE v1 & $-0.61$ & 2-PL factor model trained on 500k rows. First model with clear discriminative signal, AUC about 0.70. \\
+Factor/PGE v2 & $-0.62$ & More rows, deeper MLP, theta regularization, and temperature calibration. Local NLL looked strong but hidden score regressed. \\
+Factor + prior ensemble & $-0.61$--$-0.66$ & Conservative logit blends tied best; per-category offsets and over-routed versions degraded sharply. \\
+Multi-seed factor & $-0.62$ & Modal-trained MiniLM factor ensemble. Variance reduction was real locally but too small on hidden data. \\
+Larger encoders & $-0.65$ & MPNet/BGE-style factor artifacts. Extra embedding capacity did not fix hidden calibration. \\
+Robust acquisition variants & $-0.61$--$-0.63$ & Ensemble, hash, offset, diverse, and multiseed variants tested acquisition and label-use choices. Hash/diverse landed near $-0.62$; stronger offsets fell to $-0.63$. \\
+Robust prior router & $-0.61$--$-0.63$ & Prior, v1, and v2 tied best at $-0.61$. Clipping slipped to $-0.62$; increasing v2 weight to 0.60 fell to $-0.63$. \\
+Direct residual blends & $-0.61$--$-0.65$ & Learned residual MLP had weak useful signal at 15\% blend ($-0.61$), but 35\%--55\% weights overfit and worsened hidden NLL. \\
 \bottomrule
 \end{longtable}
+\normalsize
 
 \section{Implementation Notes}
 
-The final project also includes reproducibility and safety infrastructure: \texttt{tests/test\_submissions\_robustness.py} checks that each submission returns finite probabilities and handles malformed inputs; \texttt{make\_submission.py} builds flat Codabench ZIPs and avoids accidental overwrites unless forced; \texttt{dist/submission\_log.md} tracks uploaded artifacts and scores; and Modal scripts were used for larger encoder, residual, and multi-seed experiments under the \texttt{pardis-stanford} workspace.
+\begin{flushleft}
+The final project also includes reproducibility and safety infrastructure. The robustness tests check that each submission returns finite probabilities and handles malformed inputs. The submission builder creates flat Codabench ZIPs and avoids accidental overwrites unless forced. The local submission log tracks uploaded artifacts and scores, and Modal scripts were used for larger encoder, residual, and multi-seed experiments under the \texttt{pardis-stanford} workspace.
+\end{flushleft}
 
 \end{document}
