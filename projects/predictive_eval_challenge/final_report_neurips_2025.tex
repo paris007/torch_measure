@@ -18,6 +18,7 @@
 \usepackage{xcolor}
 \usepackage{tabularx}
 \usepackage{longtable}
+\usepackage{float}
 
 \title{Predictive AI Evaluation Challenge: Cold-Start Probability Modeling with Adaptive Calibration}
 
@@ -94,27 +95,27 @@ The acquisition function must never fail: any exception or non-finite score trig
 
 \section{Experiments and Ablations}
 
-Table~\ref{tab:history} summarizes the main Codabench results. The best score was $-0.61$, reached by several conservative prior-family submissions. Larger or more aggressive variants generally worsened hidden log-loss. Appendix~\ref{app:iteration-log} gives the fuller iteration log from the development transcript.
+Table~\ref{tab:history} summarizes the main Codabench results, ordered from lower to higher hidden negative log-loss score. The best score was $-0.61$, reached by several conservative prior-family submissions. Larger or more aggressive variants generally worsened hidden log-loss. Appendix~\ref{app:iteration-log} gives the fuller iteration log from the development transcript.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
-\small
+\footnotesize
 \begin{tabularx}{\textwidth}{@{}lclX@{}}
 \toprule
-\textbf{Submission} & \textbf{NLL} & \textbf{AUC} & \textbf{Interpretation} \\
+\textbf{Submission} & \shortstack{\textbf{Score}\\\textbf{(neg. log-loss)}} & \textbf{AUC} & \textbf{Interpretation} \\
 \midrule
-\texttt{baseline} / \texttt{embedding v1} & $-0.64$ & -- & Early prior and class-balanced MiniLM head plateaued. \\
 \texttt{embedding v2} & $-0.69$ & -- & Subject-embedding interaction overfit cold-start distribution. \\
-\texttt{factor\_pge v1} & $-0.61$ & 0.70 & 2-PL factor model gave the strongest AUC signal. \\
-\texttt{factor\_baseline\_ensemble} & $-0.61$--$-0.62$ & 0.69 & Helpful when conservative; per-category routing overfit. \\
-\texttt{robust\_prior\_v1/v2} & $-0.61$ & 0.68 & Conservative prior router; best leaderboard entry. \\
-\texttt{robust\_prior\_clip/hash/diverse} & $-0.62$ & -- & Acquisition and label-blend ablations. \\
-\texttt{robust\_prior\_v2\_w60} & $-0.63$ & -- & Higher v2 weight looked good locally but overfit hidden data. \\
-\texttt{robust\_direct\_residual\_w15} & $-0.61$ & -- & Tiny learned residual tied best; larger residual weights hurt. \\
 \texttt{robust\_mpnet} & $-0.65$ & -- & Larger encoder/factor artifact did not generalize. \\
+\texttt{baseline} / \texttt{embedding v1} & $-0.64$ & -- & Early prior and class-balanced MiniLM head plateaued. \\
+\texttt{robust\_prior\_v2\_w60} & $-0.63$ & -- & Higher v2 weight looked good locally but overfit hidden data. \\
+\texttt{robust\_prior\_clip/hash/diverse} & $-0.62$ & -- & Acquisition and label-blend ablations. \\
+\texttt{factor\_baseline\_ensemble} & $-0.62$--$-0.61$ & 0.69 & Helpful when conservative; per-category routing overfit. \\
+\texttt{factor\_pge v1} & $-0.61$ & 0.70 & 2-PL factor model gave the strongest AUC signal. \\
+\texttt{robust\_direct\_residual\_w15} & $-0.61$ & -- & Tiny learned residual tied best; larger residual weights hurt. \\
+\texttt{robust\_prior\_v1/v2} & $-0.61$ & 0.68 & Conservative prior router; best leaderboard entry. \\
 \bottomrule
 \end{tabularx}
-\caption{Selected Codabench results. Scores are reported as negative log-loss, so less negative is better. The leaderboard screenshot for username \texttt{parism} shows best score $-0.61$ and AUC $0.68$.}
+\caption{Selected Codabench results, ordered from lower to higher hidden Codabench negative log-loss score. Higher is better because scores are negative. The best \texttt{parism} entry was $-0.61$ with AUC $0.68$.}
 \label{tab:history}
 \end{table}
 
@@ -164,11 +165,5 @@ Direct residual blends & $-0.61$--$-0.65$ & Learned residual MLP had weak useful
 \bottomrule
 \end{longtable}
 \normalsize
-
-\section{Implementation Notes}
-
-\begin{flushleft}
-The final project also includes reproducibility and safety infrastructure. The robustness tests check that each submission returns finite probabilities and handles malformed inputs. The submission builder creates flat Codabench ZIPs and avoids accidental overwrites unless forced. The local submission log tracks uploaded artifacts and scores, and Modal scripts were used for larger encoder, residual, and multi-seed experiments under the \texttt{pardis-stanford} workspace.
-\end{flushleft}
 
 \end{document}
