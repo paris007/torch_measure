@@ -18,6 +18,22 @@ import pandas as pd
 
 REPO_ID = "aims-foundations/measurement-db"
 REGISTRY_FILES = {"subjects.parquet", "items.parquet", "benchmarks.parquet"}
+DEFAULT_MAX_ITEM_CHARS = 800
+
+
+def item_variant_key(row: dict | pd.Series, max_chars: int = DEFAULT_MAX_ITEM_CHARS) -> str:
+    """Return the condition-specific cold-start item key used by the challenge.
+
+    The public response tables expose `item_variant_id`, but Codabench runtime
+    rows only provide benchmark, condition, and item text. This key mirrors the
+    hidden-item semantics closely enough for local factor/CV training: the same
+    text under different benchmark-condition contexts is treated as a different
+    item variant.
+    """
+    benchmark = str(row.get("benchmark", ""))
+    condition = str(row.get("condition", "none") or "none")
+    item = str(row.get("item_content", ""))[:max_chars]
+    return f"{benchmark}||{condition}||{item}"
 
 
 def list_response_files(repo_id: str = REPO_ID) -> list[str]:

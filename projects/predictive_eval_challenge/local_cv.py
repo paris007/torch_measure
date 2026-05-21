@@ -47,16 +47,16 @@ from train_factor import (
     fit_item_param_mlp,
 )
 from train_embedding import build_features, compute_subject_embeddings
+try:
+    from data_loading import item_variant_key
+except ImportError:  # pragma: no cover - allows package-style imports
+    from projects.predictive_eval_challenge.data_loading import item_variant_key
 
 
 ENCODER_ID = "sentence-transformers/all-MiniLM-L6-v2"
 MAX_ITEM_CHARS = 800
 MAX_SEQ_LENGTH = 128
 EPS = 1e-4
-
-
-def _truncate_item(value) -> str:
-    return str(value)[:MAX_ITEM_CHARS]
 
 
 def negative_log_loss(y_true: np.ndarray, y_pred: np.ndarray) -> float:
@@ -80,12 +80,12 @@ def encode_all_unique_items(
 ) -> tuple[np.ndarray, dict[str, int]]:
     """Encode every unique truncated item once, with disk cache."""
     unique = (
-        df[["item_content", "benchmark", "condition"]]
-        .assign(item_content=lambda x: x["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS))
-        .drop_duplicates("item_content")
-        .reset_index(drop=True)
+        df[["item_content", "benchmark", "condition"]].copy()
     )
-    items_list = unique["item_content"].astype(str).tolist()
+    unique["item_key"] = unique.apply(item_variant_key, axis=1)
+    unique["item_content"] = unique["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    unique = unique.drop_duplicates("item_key").reset_index(drop=True)
+    items_list = unique["item_key"].astype(str).tolist()
     fingerprint_input = encoder_id + "::" + str(len(items_list)) + "::" + "||".join(items_list[:20])
     fingerprint = hashlib.sha1(fingerprint_input.encode()).hexdigest()[:16]
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -215,7 +215,7 @@ def score_factor(
     """2-PL factor + item-param MLP fit on train rows; score valid rows."""
     train = train_df.copy()
     train["subject_name"] = train["subject_content"].astype(str).map(parse_subject_name)
-    train["item_key"] = train["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    train["item_key"] = train.apply(item_variant_key, axis=1)
 
     subjects = sorted(train["subject_name"].unique().tolist())
     subj_to_idx = {s: i for i, s in enumerate(subjects)}
@@ -256,7 +256,7 @@ def score_factor(
     subject_theta = {name: float(theta[i]) for name, i in subj_to_idx.items()}
 
     valid = valid_df.copy()
-    valid["item_key"] = valid["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    valid["item_key"] = valid.apply(item_variant_key, axis=1)
     valid["subject_name"] = valid["subject_content"].astype(str).map(parse_subject_name)
 
     valid_rows = np.array(

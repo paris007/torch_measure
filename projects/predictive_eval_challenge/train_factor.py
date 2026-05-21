@@ -27,6 +27,11 @@ from torch_measure.models import (
     parse_subject_name,
 )
 
+try:
+    from data_loading import item_variant_key
+except ImportError:  # pragma: no cover - allows package-style imports
+    from projects.predictive_eval_challenge.data_loading import item_variant_key
+
 
 ENCODER_ID = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_ARTIFACT_PATH = (
@@ -46,9 +51,10 @@ def encode_unique_items(
     """Encode each unique item exactly once."""
     from sentence_transformers import SentenceTransformer
 
-    unique = df[["item_content", "benchmark", "condition"]].drop_duplicates("item_content")
-    unique = unique.copy()
+    unique = df[["item_content", "benchmark", "condition"]].copy()
+    unique["item_key"] = unique.apply(item_variant_key, axis=1)
     unique["item_content"] = unique["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    unique = unique.drop_duplicates("item_key").reset_index(drop=True)
     texts = [format_item_text(row) for row in unique.to_dict("records")]
     encoder = SentenceTransformer(model_id, device=device) if device else SentenceTransformer(model_id)
     encoder.max_seq_length = MAX_SEQ_LENGTH
@@ -62,9 +68,7 @@ def encode_unique_items(
         ),
         dtype=np.float32,
     )
-    item_to_row = {
-        str(item): idx for idx, item in enumerate(unique["item_content"].astype(str).values)
-    }
+    item_to_row = {str(item): idx for idx, item in enumerate(unique["item_key"].astype(str).values)}
     return embeddings, item_to_row
 
 
@@ -290,7 +294,7 @@ def train_factor_pge(
     # Subject and item indexing.
     baseline = SmoothedPriorPredictiveEvaluator.fit(train_df.to_dict("records"))
     train_df["subject_name"] = train_df["subject_content"].astype(str).map(parse_subject_name)
-    train_df["item_key"] = train_df["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    train_df["item_key"] = train_df.apply(item_variant_key, axis=1)
 
     subject_names = sorted(train_df["subject_name"].unique().tolist())
     subject_to_idx = {name: idx for idx, name in enumerate(subject_names)}
@@ -362,7 +366,7 @@ def train_factor_pge(
     if len(cal_df) > 0:
         print(f"[factor] calibrating temperature on {len(cal_df)} held-out rows", flush=True)
         cal_df = cal_df.copy()
-        cal_df["item_key"] = cal_df["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+        cal_df["item_key"] = cal_df.apply(item_variant_key, axis=1)
         cal_df["subject_name"] = cal_df["subject_content"].astype(str).map(parse_subject_name)
         cal_embeds = np.stack(
             [

@@ -29,6 +29,9 @@ SUBMISSIONS_DIR = REPO_ROOT / "codabench_submissions"
 
 SUBMISSION_NAMES = [
     "baseline",
+    "baseline_no_adapt",
+    "baseline_clip005",
+    "baseline_category_offset",
     "embedding",
     "factor_pge",
     "factor_baseline_ensemble",

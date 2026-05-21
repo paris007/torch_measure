@@ -57,6 +57,9 @@ def main() -> None:
         "name",
         choices=[
             "baseline",
+            "baseline_no_adapt",
+            "baseline_clip005",
+            "baseline_category_offset",
             "embedding",
             "factor_pge",
             "factor_baseline_ensemble",
