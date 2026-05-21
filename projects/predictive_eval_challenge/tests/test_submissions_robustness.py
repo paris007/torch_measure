@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -31,6 +32,19 @@ SUBMISSION_NAMES = [
     "embedding",
     "factor_pge",
     "factor_baseline_ensemble",
+    "robust_ensemble",
+    "robust_hash",
+    "robust_offset",
+    "robust_diverse",
+    "robust_multiseed",
+    "robust_mpnet",
+    "robust_prior",
+    "robust_prior_v1",
+    "robust_prior_v2",
+    "robust_prior_clip",
+    "robust_direct_residual",
+    "robust_direct_residual_w15",
+    "robust_direct_residual_w55",
     "factor_pge_multiseed",
 ]
 
@@ -92,7 +106,11 @@ def _load_module(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(path.parent))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.pop(0)
     return module
 
 

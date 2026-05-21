@@ -135,6 +135,66 @@ def fit_smoothed_prior(rows: list[dict], strength: float = 25.0) -> dict:
     }
 
 
+def fit_rich_smoothed_prior(rows: list[dict], strength: float = 25.0) -> dict:
+    """Fit the v2 prior hierarchy including subject-benchmark-condition."""
+    labels = [float(r["label"]) for r in rows if "label" in r]
+    global_mean = sum(labels) / len(labels) if labels else 0.5
+
+    def vals_for(row: dict, fields: tuple[str, ...]) -> tuple[str, ...]:
+        vals = []
+        for f in fields:
+            if f == "subject_name":
+                vals.append(parse_subject_name(str(row.get("subject_content", ""))))
+            elif f == "condition":
+                vals.append(str(row.get("condition", "none") or "none"))
+            else:
+                vals.append(str(row.get(f, "")))
+        return tuple(vals)
+
+    def raw_counts(fields: tuple[str, ...]) -> tuple[dict[str, float], dict[str, int], dict[str, tuple[str, ...]]]:
+        sums: dict[str, float] = {}
+        counts: dict[str, int] = {}
+        key_parts: dict[str, tuple[str, ...]] = {}
+        for row in rows:
+            if "label" not in row:
+                continue
+            parts = vals_for(row, fields)
+            k = _key(*parts)
+            sums[k] = sums.get(k, 0.0) + float(row["label"])
+            counts[k] = counts.get(k, 0) + 1
+            key_parts[k] = parts
+        return sums, counts, key_parts
+
+    def smoothed(fields: tuple[str, ...], parent: dict[str, float] | float) -> dict[str, float]:
+        sums, counts, key_parts = raw_counts(fields)
+        out: dict[str, float] = {}
+        for k, total in sums.items():
+            if isinstance(parent, dict):
+                pk = _key(*key_parts[k][:-1])
+                parent_value = parent.get(pk, global_mean)
+            else:
+                parent_value = float(parent)
+            out[k] = (total + strength * parent_value) / (counts[k] + strength)
+        return out
+
+    subject = smoothed(("subject_name",), global_mean)
+    benchmark = smoothed(("benchmark",), global_mean)
+    benchmark_condition = smoothed(("benchmark", "condition"), benchmark)
+    subject_benchmark = smoothed(("subject_name", "benchmark"), subject)
+    subject_benchmark_condition = smoothed(
+        ("subject_name", "benchmark", "condition"), subject_benchmark
+    )
+    return {
+        "global_mean": global_mean,
+        "strength": strength,
+        "subject": subject,
+        "benchmark": benchmark,
+        "benchmark_condition": benchmark_condition,
+        "subject_benchmark": subject_benchmark,
+        "subject_benchmark_condition": subject_benchmark_condition,
+    }
+
+
 # --- Data loading (runs inside the container) --------------------------------
 
 def build_runtime_examples(cache_dir: Path):
@@ -804,6 +864,302 @@ def main(
 
 
 # --- Modal: multi-seed MiniLM training for logit-space ensembling -----------
+
+
+@app.local_entrypoint()
+def train_direct_residual(
+    encoder_id: str = "sentence-transformers/all-MiniLM-L6-v2",
+    max_rows: int = 2_500_000,
+    seed: int = 41,
+    hidden: int = 256,
+    hidden_layers: int = 2,
+    dropout: float = 0.10,
+    epochs: int = 8,
+    batch_size: int = 8192,
+    lr: float = 2e-4,
+    encode_batch: int = 256,
+    out_label: str = "direct_residual_minilm_seed41",
+):
+    """Train a direct probability residual model on Modal.
+
+    The model predicts:
+        logit(p) = logit(prior_v1_v2_blend) + residual_MLP(item_embed, prior_features)
+
+    This keeps the empirical prior as the anchor and only asks text embeddings
+    to learn residual difficulty/ranking signal.
+    """
+    artifact_bytes, prior = train_direct_residual_remote.remote(
+        encoder_id=encoder_id,
+        max_rows=max_rows,
+        seed=seed,
+        hidden=hidden,
+        hidden_layers=hidden_layers,
+        dropout=dropout,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        encode_batch=encode_batch,
+        run_label=out_label,
+    )
+    out_dir = LOCAL_PROJECT / "ensemble_artifacts" / out_label
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "direct_residual.npz").write_bytes(artifact_bytes)
+    (out_dir / "smoothed_prior.json").write_text(json.dumps(prior))
+    (out_dir / "smoothed_prior_v2.json").write_text(json.dumps(prior))
+    print(f"[write] {out_dir / 'direct_residual.npz'}  ({len(artifact_bytes):,} bytes)")
+    print(f"[write] {out_dir / 'smoothed_prior_v2.json'}")
+
+
+@app.function(
+    image=image,
+    gpu="A100-80GB",
+    volumes={"/cache": vol},
+    timeout=3 * 60 * 60,
+)
+def train_direct_residual_remote(
+    encoder_id: str,
+    max_rows: int,
+    seed: int,
+    hidden: int,
+    hidden_layers: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    encode_batch: int,
+    run_label: str,
+) -> tuple[bytes, dict]:
+    import io
+    import os
+
+    import numpy as np
+    import torch
+    from torch import nn
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cache_dir = Path("/cache")
+    (cache_dir / "hf_cache").mkdir(exist_ok=True)
+    (cache_dir / "st_cache").mkdir(exist_ok=True)
+    os.environ["HF_HOME"] = str(cache_dir / "hf_cache")
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cache_dir / "st_cache")
+
+    df = build_runtime_examples(cache_dir)
+    if max_rows and len(df) > max_rows:
+        df = df.sample(n=max_rows, random_state=seed).reset_index(drop=True)
+    df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+    n_cal = max(1, int(len(df) * 0.05))
+    cal_df = df.iloc[:n_cal].copy()
+    train_df = df.iloc[n_cal:].copy()
+    print(
+        f"[direct] rows train={len(train_df):,} cal={len(cal_df):,} "
+        f"subjects={df['subject_content'].nunique():,}",
+        flush=True,
+    )
+
+    prior = fit_rich_smoothed_prior(train_df.to_dict("records"))
+    g = float(prior["global_mean"])
+    print(f"[direct] prior global_mean={g:.4f}", flush=True)
+
+    def clip(p):
+        return np.clip(p, 1e-4, 1.0 - 1e-4)
+
+    def logit(p):
+        p = clip(p)
+        return np.log(p / (1.0 - p))
+
+    def prior_features(frame):
+        out = np.empty((len(frame), 10), dtype=np.float32)
+        subj = frame["subject_content"].astype(str).map(parse_subject_name).values
+        bench = frame["benchmark"].astype(str).values
+        cond = frame["condition"].fillna("none").astype(str).replace("", "none").values
+        for i, (s, bmk, cnd) in enumerate(zip(subj, bench, cond, strict=False)):
+            s_val = prior.get("subject", {}).get(s, g)
+            b_val = prior.get("benchmark", {}).get(bmk, g)
+            bc_val = prior.get("benchmark_condition", {}).get(_key(bmk, cnd), g)
+            sb_val = prior.get("subject_benchmark", {}).get(_key(s, bmk), g)
+            sbc_raw = prior.get("subject_benchmark_condition", {}).get(_key(s, bmk, cnd))
+            sbc_val = sbc_raw if sbc_raw is not None else sb_val
+            p1 = 0.85 * (
+                0.35 * s_val + 0.15 * b_val + 0.25 * bc_val + 0.25 * sb_val
+            ) + 0.15 * g
+            p2 = 0.15 * p1 + 0.85 * (0.95 * sbc_val + 0.05 * g)
+            base = 0.8 * p1 + 0.2 * p2
+            vals = [p1, p2, base, s_val, b_val, bc_val, sb_val, sbc_val]
+            out[i, :8] = clip(np.array(vals, dtype=np.float32))
+            out[i, 8] = 1.0 if sbc_raw is not None else 0.0
+            out[i, 9] = float(len(str(cnd)) > 0 and str(cnd) != "none")
+        out[:, :8] = logit(out[:, :8])
+        return out
+
+    all_items = (
+        df[["item_content", "benchmark", "condition"]]
+        .drop_duplicates("item_content")
+        .reset_index(drop=True)
+    )
+    all_items["item_content"] = all_items["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS)
+    texts = [format_item_text(r) for r in all_items.to_dict("records")]
+    from sentence_transformers import SentenceTransformer
+
+    print(f"[direct] encoding {len(texts):,} unique items with {encoder_id}", flush=True)
+    encoder = SentenceTransformer(encoder_id, device=device)
+    encoder.max_seq_length = MAX_SEQ_LENGTH
+    embeds = np.asarray(
+        encoder.encode(
+            texts,
+            batch_size=encode_batch,
+            normalize_embeddings=True,
+            show_progress_bar=True,
+            convert_to_numpy=True,
+        ),
+        dtype=np.float32,
+    )
+    item_to_row = {str(k): i for i, k in enumerate(all_items["item_content"].astype(str).values)}
+
+    def make_features(frame):
+        keys = frame["item_content"].astype(str).str.slice(0, MAX_ITEM_CHARS).values
+        rows = np.array([item_to_row[str(k)] for k in keys], dtype=np.int64)
+        return np.concatenate([embeds[rows], prior_features(frame)], axis=1).astype(np.float32)
+
+    x_train = make_features(train_df)
+    y_train = train_df["label"].to_numpy(dtype=np.float32)
+    x_cal = make_features(cal_df)
+    y_cal = cal_df["label"].to_numpy(dtype=np.float32)
+    base_logit_train = x_train[:, embeds.shape[1] + 2]
+    base_logit_cal = x_cal[:, embeds.shape[1] + 2]
+
+    mean = x_train.mean(axis=0).astype(np.float32)
+    scale = x_train.std(axis=0).astype(np.float32)
+    scale = np.where(scale < 1e-6, 1.0, scale).astype(np.float32)
+    x_train = (x_train - mean) / scale
+    x_cal = (x_cal - mean) / scale
+
+    class ResidualMLP(nn.Module):
+        def __init__(self, in_dim: int):
+            super().__init__()
+            layers: list[nn.Module] = []
+            prev = in_dim
+            for _ in range(max(1, hidden_layers)):
+                layers.append(nn.Linear(prev, hidden))
+                layers.append(nn.GELU())
+                if dropout > 0:
+                    layers.append(nn.Dropout(dropout))
+                prev = hidden
+            layers.append(nn.Linear(prev, 1))
+            self.net = nn.Sequential(*layers)
+
+        def forward(self, x):
+            return self.net(x).squeeze(-1)
+
+    torch.manual_seed(seed)
+    model = ResidualMLP(x_train.shape[1]).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    loss_fn = nn.BCEWithLogitsLoss()
+    x_t = torch.as_tensor(x_train, dtype=torch.float32, device=device)
+    y_t = torch.as_tensor(y_train, dtype=torch.float32, device=device)
+    base_t = torch.as_tensor(base_logit_train, dtype=torch.float32, device=device)
+    n = x_t.shape[0]
+    for epoch in range(epochs):
+        order = torch.randperm(n, device=device)
+        total = 0.0
+        nb = 0
+        model.train()
+        for start in range(0, n, batch_size):
+            idx = order[start:start + batch_size]
+            residual = 0.5 * model(x_t[idx])
+            logits = base_t[idx] + residual
+            loss = loss_fn(logits, y_t[idx])
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            total += float(loss.detach())
+            nb += 1
+        print(f"  direct epoch {epoch + 1}/{epochs} loss={total / max(nb, 1):.5f}", flush=True)
+
+    model.eval()
+    with torch.no_grad():
+        residual_cal = 0.5 * model(torch.as_tensor(x_cal, dtype=torch.float32, device=device)).cpu().numpy()
+    logits_cal = base_logit_cal + residual_cal
+    eps = 1e-4
+    grid = np.concatenate([np.linspace(0.2, 1.0, 33), np.linspace(1.05, 3.0, 40)])
+    best_T, best_nll = 1.0, float("inf")
+    for T in grid:
+        p = np.clip(1.0 / (1.0 + np.exp(-logits_cal / T)), eps, 1.0 - eps)
+        nll = float(-np.mean(y_cal * np.log(p) + (1.0 - y_cal) * np.log(1.0 - p)))
+        if nll < best_nll:
+            best_nll = nll
+            best_T = float(T)
+    p_base = np.clip(1.0 / (1.0 + np.exp(-base_logit_cal)), eps, 1.0 - eps)
+    nll_base = float(-np.mean(y_cal * np.log(p_base) + (1.0 - y_cal) * np.log(1.0 - p_base)))
+    print(f"[direct] cal NLL base={nll_base:.5f} residual T*={best_T:.3f} nll={best_nll:.5f}", flush=True)
+
+    save = {
+        "encoder_id": np.array(encoder_id),
+        "feature_mean": mean,
+        "feature_scale": scale,
+        "temperature": np.array(best_T, dtype=np.float32),
+        "residual_scale": np.array(0.5, dtype=np.float32),
+        "global_mean": np.array(g, dtype=np.float32),
+    }
+    for i, mod in enumerate(model.net):
+        if isinstance(mod, nn.Linear):
+            save[f"mlp_w{i}"] = mod.weight.detach().cpu().numpy().astype(np.float32)
+            save[f"mlp_b{i}"] = mod.bias.detach().cpu().numpy().astype(np.float32)
+    buf = io.BytesIO()
+    np.savez(buf, **save)
+    artifact_bytes = buf.getvalue()
+    out_dir = Path("/cache") / "runs" / run_label
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "direct_residual.npz").write_bytes(artifact_bytes)
+    (out_dir / "smoothed_prior_v2.json").write_text(json.dumps(prior))
+    vol.commit()
+    return artifact_bytes, prior
+
+
+@app.local_entrypoint()
+def train_single_keep(
+    encoder_id: str = "sentence-transformers/all-mpnet-base-v2",
+    max_rows: int = 2_500_000,
+    seed: int = 11,
+    factor_epochs: int = 8,
+    mlp_hidden: int = 384,
+    mlp_hidden_layers: int = 2,
+    mlp_dropout: float = 0.10,
+    mlp_epochs: int = 450,
+    holdout_mode: str = "random_rows",
+    calibration_frac: float = 0.05,
+    out_label: str = "mpnet_factor_seed11",
+):
+    """Train one factor artifact on Modal and save it without overwriting dist.
+
+    This is the safer experiment entrypoint: it writes to
+    `ensemble_artifacts/<out_label>/` and leaves all existing Codabench
+    submission artifacts untouched until we explicitly choose to package it.
+    """
+    print(
+        f"[single-keep] encoder={encoder_id}  seed={seed}  "
+        f"max_rows={max_rows:,}  out_label={out_label}",
+        flush=True,
+    )
+    artifact_bytes, smoothed = train_factor_bge.remote(
+        encoder_id=encoder_id,
+        max_rows=max_rows,
+        seed=seed,
+        factor_epochs=factor_epochs,
+        mlp_hidden=mlp_hidden,
+        mlp_hidden_layers=mlp_hidden_layers,
+        mlp_dropout=mlp_dropout,
+        mlp_epochs=mlp_epochs,
+        holdout_mode=holdout_mode,
+        calibration_frac=calibration_frac,
+        run_label=out_label,
+    )
+
+    out_dir = LOCAL_PROJECT / "ensemble_artifacts" / out_label
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "factor_pge.npz").write_bytes(artifact_bytes)
+    (out_dir / "smoothed_prior.json").write_text(json.dumps(smoothed))
+    print(f"[write] {out_dir / 'factor_pge.npz'}  ({len(artifact_bytes):,} bytes)")
+    print(f"[write] {out_dir / 'smoothed_prior.json'}")
 
 
 @app.local_entrypoint()

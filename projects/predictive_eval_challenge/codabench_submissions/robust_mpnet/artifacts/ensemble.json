@@ -1,0 +1,69 @@
+{
+  "factor_weight": 0.0,
+  "per_benchmark": {
+    "afrimedqa": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.25
+    },
+    "agentdojo": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.85
+    },
+    "ai2d_test": {
+      "factor_weight": 0.05,
+      "factor_temperature": 0.25
+    },
+    "androidworld": {
+      "factor_weight": 0.0,
+      "factor_temperature": 1.0
+    },
+    "bfcl": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.25
+    },
+    "cybench": {
+      "factor_weight": 0.0,
+      "factor_temperature": 1.0
+    },
+    "hle": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.1
+    },
+    "livecodebench": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.30000000000000004
+    },
+    "matharena": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.2
+    },
+    "mathvista_mini": {
+      "factor_weight": 0.0,
+      "factor_temperature": 1.0
+    },
+    "mmbench_v11": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.2
+    },
+    "mmlupro": {
+      "factor_weight": 0.05,
+      "factor_temperature": 0.4
+    },
+    "mtbench": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.1
+    },
+    "rewardbench": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.15000000000000002
+    },
+    "swebench": {
+      "factor_weight": 0.0,
+      "factor_temperature": 0.1
+    },
+    "ultrafeedback": {
+      "factor_weight": 0.5,
+      "factor_temperature": 0.1
+    }
+  }
+}
