@@ -34,7 +34,7 @@
 \maketitle
 
 \begin{abstract}
-This report describes my submission to the CS321M Predictive AI Evaluation Challenge. The task is to predict the probability that a known AI subject answers a cold-start benchmark item correctly, given only subject metadata, item text, benchmark, and condition. I explored smoothed empirical priors, embedding heads, item-response factor models, factor/prior ensembles, adaptive labeling, and Modal-trained variants. The best hidden Codabench score was $-0.61$ negative log-loss under username \texttt{parism}. The strongest family was not the largest neural model; it was a conservative smoothed-prior router with adaptive calibration. Heavier factor models, larger encoders, and learned residual probability models consistently overfit hidden data.
+This report describes my submission to the CS321M Predictive AI Evaluation Challenge. The task is to predict the probability that a known AI subject answers a cold-start benchmark item correctly, given only subject metadata, item text, benchmark, and condition. I explored smoothed empirical priors, embedding heads, item-response factor models, factor/prior ensembles, adaptive labeling, and Modal-trained variants. The best hidden Codabench score was $-0.60$ negative log-loss under username \texttt{parism}. The strongest family was not the largest neural model; it was a smoothed-prior baseline with conservative category-level adaptive calibration. Heavier factor models, larger encoders, and learned residual probability models consistently overfit hidden data.
 \end{abstract}
 
 \section{Problem Formulation}
@@ -75,7 +75,7 @@ The simplest useful model estimates empirical correctness rates at several granu
 \rightarrow
 \text{global}.
 \]
-The first baseline averaged several cells and scored about $-0.64$ hidden log-loss. A stronger v2 baseline preferred the deepest populated cell, especially subject-benchmark-condition, with Bayesian shrinkage toward coarser cells. This improved local NLL dramatically, but hidden Codabench revealed that the finest cells were less stable under distribution shift than local validation suggested. The final robust prior router therefore blended older and newer prior families instead of trusting the deepest cell unconditionally.
+The first baseline averaged several cells and scored about $-0.64$ hidden log-loss. A stronger v2 baseline preferred the deepest populated cell, especially subject-benchmark-condition, with Bayesian shrinkage toward coarser cells. This improved local NLL dramatically, but hidden Codabench revealed that the finest cells were less stable under distribution shift than local validation suggested. The final successful baseline kept this smoothed-prior backbone and used revealed labels only through a tightly clipped inferred data-category offset.
 
 \paragraph{Embedding head.}
 I trained a content-based head using SentenceTransformer item embeddings plus smoothed subject priors. The first version used MiniLM item embeddings and \texttt{class\_weight=balanced}; it had strong in-sample diagnostics (NLL about 0.557, AUC about 0.788) but hidden score only $-0.64$, indicating calibration and cold-start mismatch. I then removed class balancing and added a subject embedding interaction, concatenating item embedding, subject prior, and the subject's mean embedding profile. This made the smoke-test prediction much better calibrated to the public base rate, but hidden performance dropped to $-0.69$. The lesson was that raw text embeddings and subject-conditioned item averages overfit public benchmark structure.
@@ -88,14 +88,14 @@ I implemented a three-stage prediction-guided-evaluation pipeline: first fit a r
 for cold-start items. The first factor model trained on 500k rows and scored $-0.61$ with AUC 0.70, the first submission with clear discriminative signal. I then expanded to roughly 1.9M rows, a two-layer 256-unit MLP, theta weight decay, and temperature calibration. Local held-out NLL improved sharply after fitting $T=0.275$, but hidden performance regressed in several calibrated variants. Multi-seed MiniLM ensembling, MPNet/BGE-style larger-encoder experiments on Modal, and bigger MLPs reduced some validation losses but did not beat the simpler robust prior family on hidden Codabench.
 
 \paragraph{Factor/prior ensembles and robust prior router.}
-The factor model and smoothed priors made different mistakes, so I built logit-space ensembles. A global 70/30 factor/prior ensemble tied the $-0.61$ range, but per-benchmark routing based on local diagnostics overfit badly: benchmarks where the public baseline looked dominant did not map cleanly to hidden evaluation. The best final family was a robust prior-only router between the older v1 weighted prior and the deeper v2 prior. Without labels, it uses a conservative default blend. With revealed labels, it compares the v1 and v2 priors on labeled examples for the current category and softly shifts the logit-space blend toward the better prior. A separate clipped logit blend shrinks predictions toward the observed mean of the revealed labels for that category.
+The factor model and smoothed priors made different mistakes, so I built logit-space ensembles. A global 70/30 factor/prior ensemble tied the $-0.61$ range, but per-benchmark routing based on local diagnostics overfit badly: benchmarks where the public baseline looked dominant did not map cleanly to hidden evaluation. The strongest final submission was simpler: the v2 smoothed prior plus a conservative adaptive offset grouped by inferred data category and condition. Related ablations confirmed the direction: ignoring adaptive labels scored $-0.63$, a tightly clipped global offset scored $-0.62$, and inferred category-level offsets scored $-0.60$.
 
 \paragraph{Adaptive acquisition.}
-The acquisition function must never fail: any exception or non-finite score triggers random fallback for the entire round. I tried length-biased acquisition, uniform stable hashing, uncertainty/entropy, v1/v2 disagreement, diversity tiers, and category-aware variants. Length bias was harmful because it selected long code/math items whose revealed labels were systematically harder than the rest of the category; applying those residuals globally pulled many predictions down. The most robust submissions use simple deterministic uncertainty or hash selection and clipped adaptive calibration.
+The acquisition function must never fail: any exception or non-finite score triggers random fallback for the entire round. I tried length-biased acquisition, uniform stable hashing, uncertainty/entropy, v1/v2 disagreement, diversity tiers, and category-aware variants. Length bias was harmful because it selected long code/math items whose revealed labels were systematically harder than the rest of the category; applying those residuals globally pulled many predictions down. The best final variant used stable acquisition and then combined global, inferred-category, and benchmark-condition residuals with a tight $\pm 0.05$ clip.
 
 \section{Experiments and Ablations}
 
-Table~\ref{tab:history} summarizes the main Codabench results, ordered from lower to higher hidden negative log-loss score. The best score was $-0.61$, reached by several conservative prior-family submissions. Larger or more aggressive variants generally worsened hidden log-loss. Appendix~\ref{app:iteration-log} gives the fuller iteration log from the development transcript.
+Table~\ref{tab:history} summarizes the main Codabench results, ordered from lower to higher hidden negative log-loss score. The best score was $-0.60$, reached by the category-offset baseline. Larger or more aggressive variants generally worsened hidden log-loss. Appendix~\ref{app:iteration-log} gives the fuller iteration log from the development transcript.
 
 \begin{table}[H]
 \centering
@@ -109,17 +109,19 @@ Table~\ref{tab:history} summarizes the main Codabench results, ordered from lowe
 \texttt{baseline} / \texttt{embedding v1} & $-0.64$ & -- & Early prior and class-balanced MiniLM head plateaued. \\
 \texttt{robust\_prior\_v2\_w60} & $-0.63$ & -- & Higher v2 weight looked good locally but overfit hidden data. \\
 \texttt{robust\_prior\_clip/hash/diverse} & $-0.62$ & -- & Acquisition and label-blend ablations. \\
+\texttt{baseline\_clip005} & $-0.62$ & -- & Current baseline with a tightly clipped global adaptive offset. \\
 \texttt{factor\_baseline\_ensemble} & $-0.62$--$-0.61$ & 0.69 & Helpful when conservative; per-category routing overfit. \\
 \texttt{factor\_pge v1} & $-0.61$ & 0.70 & 2-PL factor model gave the strongest AUC signal. \\
 \texttt{robust\_direct\_residual\_w15} & $-0.61$ & -- & Tiny learned residual tied best; larger residual weights hurt. \\
 \texttt{robust\_prior\_v1/v2} & $-0.61$ & 0.68 & Conservative prior router; best leaderboard entry. \\
+\texttt{baseline\_category\_offset} & $-0.60$ & -- & Best submission: v2 smoothed prior plus inferred category-level adaptive calibration. \\
 \bottomrule
 \end{tabularx}
-\caption{Selected Codabench results, ordered from lower to higher hidden Codabench negative log-loss score. Higher is better because scores are negative. The best \texttt{parism} entry was $-0.61$ with AUC $0.68$.}
+\caption{Selected Codabench results, ordered from lower to higher hidden Codabench negative log-loss score. Higher is better because scores are negative. The best \texttt{parism} entry was $-0.60$.}
 \label{tab:history}
 \end{table}
 
-The main ablation pattern was consistent. First, calibration and shrinkage mattered more than model complexity. The factor model had useful discriminative signal on some benchmarks, but it was poorly calibrated on others and was often dominated by smoothed priors. Second, adaptive labels helped only when used gently. Removing the label blend hurt, but stronger correction and smaller clips could also hurt. Third, local simulation was useful for screening variants, but it was not a perfect proxy: increasing the default v2 prior weight from 0.45 to 0.60 improved several public-data simulator seeds, yet dropped to $-0.63$ on hidden Codabench.
+The main ablation pattern was consistent. First, calibration and shrinkage mattered more than model complexity. The factor model had useful discriminative signal on some benchmarks, but it was poorly calibrated on others and was often dominated by smoothed priors. Second, adaptive labels helped only when used at the right level. Removing the label blend scored $-0.63$, a small global offset scored $-0.62$, and inferred category-level offsets improved to $-0.60$. Third, local simulation was useful for screening variants, but it was not a perfect proxy: increasing the default v2 prior weight from 0.45 to 0.60 improved several public-data simulator seeds, yet dropped to $-0.63$ on hidden Codabench.
 
 \section{Failure Modes and Lessons}
 
@@ -127,12 +129,12 @@ The strongest failure mode was hidden-distribution mismatch. Public-data validat
 
 The second failure mode was learned residual overfitting. A Modal-trained direct residual MLP had very strong calibration performance on a held-out public slice, but hidden performance worsened as soon as the residual received substantial weight. A 15\% blend tied the best score; 5\%, 35\%, and 55\% were worse. This indicates that the residual contains some signal but is not reliable enough to carry the prediction.
 
-The third failure mode was adaptive-label selection bias. Selecting the longest items produced revealed labels concentrated in hard coding/math categories. A global offset then applied those hard-item residuals to unrelated predictions. Per-category offsets also overfit because $K=5$ labels are too few to estimate a stable category correction without heavy shrinkage. The final lesson is that this challenge rewards robust, boring probability estimation. The winning path for my submission was not a larger encoder or more expressive model, but a conservative prior hierarchy, defensive runtime code, stable adaptive acquisition, and clipped label-based calibration.
+The third failure mode was adaptive-label selection bias. Selecting the longest items produced revealed labels concentrated in hard coding/math categories. A global offset then applied those hard-item residuals to unrelated predictions. Very fine benchmark-condition offsets also overfit because $K=5$ labels are too few to estimate a stable correction without shrinkage. Inferred category-level offsets were the useful compromise: broad enough to transfer labels, but specific enough to capture systematic category shifts. The final lesson is that this challenge rewards robust, boring probability estimation. The winning path for my submission was not a larger encoder or more expressive model, but a conservative prior hierarchy, defensive runtime code, stable acquisition, and clipped category-level calibration.
 
 \section{Reproducibility}
 
 \begin{flushleft}
-The code is available at \url{https://github.com/paris007/torch_measure/tree/predictive-eval-challenge}. The final Codabench-ready directories live under \texttt{codabench\_submissions/}; \texttt{make\_submission.py} builds flat ZIP archives with \texttt{model.py} at the archive root. The best submitted artifact for archival purposes is \texttt{robust\_prior\_v1\_submission.zip}; the best leaderboard entry is username \texttt{parism}, score $-0.61$, submission ID 743892.
+The code is available at \url{https://github.com/paris007/torch_measure/tree/predictive-eval-challenge}. The final Codabench-ready directories live under \texttt{codabench\_submissions/}; \texttt{make\_submission.py} builds flat ZIP archives with \texttt{model.py} at the archive root. The best submitted artifact for archival purposes is \texttt{baseline\_category\_offset\_submission.zip}; the best leaderboard entry is username \texttt{parism}, score $-0.60$, submission ID 746268.
 \end{flushleft}
 
 \appendix
@@ -162,6 +164,7 @@ Larger encoders & $-0.65$ & MPNet/BGE-style factor artifacts. Extra embedding ca
 Robust acquisition variants & $-0.61$--$-0.63$ & Ensemble, hash, offset, diverse, and multiseed variants tested acquisition and label-use choices. Hash/diverse landed near $-0.62$; stronger offsets fell to $-0.63$. \\
 Robust prior router & $-0.61$--$-0.63$ & Prior, v1, and v2 tied best at $-0.61$. Clipping slipped to $-0.62$; increasing v2 weight to 0.60 fell to $-0.63$. \\
 Direct residual blends & $-0.61$--$-0.65$ & Learned residual MLP had weak useful signal at 15\% blend ($-0.61$), but 35\%--55\% weights overfit and worsened hidden NLL. \\
+Baseline adaptive ablations & $-0.60$--$-0.63$ & No adaptive offset scored $-0.63$; clipped global offset scored $-0.62$; inferred category-level offset scored the best result, $-0.60$. \\
 \bottomrule
 \end{longtable}
 \normalsize
