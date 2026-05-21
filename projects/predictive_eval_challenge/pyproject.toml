@@ -21,6 +21,7 @@ py-modules = [
     "eval_ensemble",
     "eval_baseline_variants",
     "per_benchmark_diag",
+    "simulate_adaptive_labels",
     "make_submission",
     "smoke_submission",
     "validate",
