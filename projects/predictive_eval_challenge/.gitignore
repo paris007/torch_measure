@@ -27,6 +27,7 @@ ensemble_artifacts/
 modal_artifacts/
 *.log
 *.out
+final_report_neurips_2025.pdf
 
 submissions/baseline.zip
 submissions/embedding.zip
