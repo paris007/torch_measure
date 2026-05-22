@@ -1,19 +1,13 @@
-"""Optional adaptive-label acquisition function for the baseline submission."""
-
 from __future__ import annotations
-
 import hashlib
+
+SALT = "category_logit_subject_tiny_parism"
 
 
 def acquisition_function(input: dict) -> float:
-    """Return a deterministic diversity score.
-
-    The absolute value is ignored by Codabench; only the within-category ranking
-    matters. This score is cheap, finite, and deterministic, so it will not
-    trigger the random fallback.
-    """
     text = "\n".join(
         [
+            SALT,
             input.get("benchmark", ""),
             input.get("condition", ""),
             input.get("subject_content", ""),

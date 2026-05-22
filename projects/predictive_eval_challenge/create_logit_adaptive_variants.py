@@ -1,3 +1,23 @@
+#!/usr/bin/env python3
+"""Create adaptive logit-offset variants.
+
+These variants keep the same smoothed-prior backbone as the winning
+category-offset model, but estimate adaptive corrections on the logit/odds
+scale using a one-step logistic intercept update:
+
+    delta_group = sum(y - p) / (prior_precision + sum(p * (1 - p)))
+
+Use:
+  python projects/predictive_eval_challenge/create_logit_adaptive_variants.py
+"""
+from __future__ import annotations
+
+import shutil
+import zipfile
+from pathlib import Path
+
+
+MODEL_TEMPLATE = r"""
 from __future__ import annotations
 
 import json
@@ -10,15 +30,15 @@ from typing import Mapping
 EPS = 1e-4
 ARTIFACT_PATH = Path(__file__).parent / "artifacts" / "smoothed_prior.json"
 
-LOGIT_CLIP = 0.35
-GLOBAL_WEIGHT = 0.15
-CATEGORY_WEIGHT = 0.35
-BC_WEIGHT = 0.2
-SUBJECT_CATEGORY_WEIGHT = 0.3
-GLOBAL_PRIOR = 5.0
-CATEGORY_PRIOR = 5.0
-BC_PRIOR = 7.0
-SUBJECT_CATEGORY_PRIOR = 8.0
+LOGIT_CLIP = __LOGIT_CLIP__
+GLOBAL_WEIGHT = __GLOBAL_WEIGHT__
+CATEGORY_WEIGHT = __CATEGORY_WEIGHT__
+BC_WEIGHT = __BC_WEIGHT__
+SUBJECT_CATEGORY_WEIGHT = __SUBJECT_CATEGORY_WEIGHT__
+GLOBAL_PRIOR = __GLOBAL_PRIOR__
+CATEGORY_PRIOR = __CATEGORY_PRIOR__
+BC_PRIOR = __BC_PRIOR__
+SUBJECT_CATEGORY_PRIOR = __SUBJECT_CATEGORY_PRIOR__
 
 CATEGORY_BY_BENCHMARK = {
     "swebench": "coding", "livecodebench": "coding", "bigcodebench": "coding",
@@ -212,3 +232,149 @@ def predict(input: dict, labeled: list[dict] | None = None) -> float:
     except Exception as exc:
         print(f"[logit_adaptive] predict fallback: {exc}", flush=True)
         return _clip_probability(float(ARTIFACT.get("global_mean", 0.5)))
+"""
+
+
+LABELING_TEMPLATE = r"""
+from __future__ import annotations
+import hashlib
+
+SALT = "__SALT__"
+
+
+def acquisition_function(input: dict) -> float:
+    text = "\n".join(
+        [
+            SALT,
+            input.get("benchmark", ""),
+            input.get("condition", ""),
+            input.get("subject_content", ""),
+            input.get("item_content", ""),
+        ]
+    )
+    digest = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
+    return float(int(digest[:12], 16) / 16**12)
+"""
+
+
+VARIANTS = {
+    "baseline_category_logit_offset": {
+        "LOGIT_CLIP": 0.30,
+        "GLOBAL_WEIGHT": 0.25,
+        "CATEGORY_WEIGHT": 0.55,
+        "BC_WEIGHT": 0.20,
+        "SUBJECT_CATEGORY_WEIGHT": 0.00,
+        "GLOBAL_PRIOR": 5.0,
+        "CATEGORY_PRIOR": 5.0,
+        "BC_PRIOR": 7.0,
+        "SUBJECT_CATEGORY_PRIOR": 20.0,
+        "SALT": "category_logit_offset_parism",
+    },
+    "baseline_category_logit_subject_tiny": {
+        "LOGIT_CLIP": 0.30,
+        "GLOBAL_WEIGHT": 0.20,
+        "CATEGORY_WEIGHT": 0.45,
+        "BC_WEIGHT": 0.20,
+        "SUBJECT_CATEGORY_WEIGHT": 0.15,
+        "GLOBAL_PRIOR": 5.0,
+        "CATEGORY_PRIOR": 5.0,
+        "BC_PRIOR": 7.0,
+        "SUBJECT_CATEGORY_PRIOR": 12.0,
+        "SALT": "category_logit_subject_tiny_parism",
+    },
+    "baseline_category_logit_subject_medium": {
+        "LOGIT_CLIP": 0.35,
+        "GLOBAL_WEIGHT": 0.15,
+        "CATEGORY_WEIGHT": 0.35,
+        "BC_WEIGHT": 0.20,
+        "SUBJECT_CATEGORY_WEIGHT": 0.30,
+        "GLOBAL_PRIOR": 5.0,
+        "CATEGORY_PRIOR": 5.0,
+        "BC_PRIOR": 7.0,
+        "SUBJECT_CATEGORY_PRIOR": 8.0,
+        "SALT": "category_logit_subject_medium_parism",
+    },
+    "baseline_category_logit_subject_plus_global": {
+        "LOGIT_CLIP": 0.30,
+        "GLOBAL_WEIGHT": 0.35,
+        "CATEGORY_WEIGHT": 0.35,
+        "BC_WEIGHT": 0.15,
+        "SUBJECT_CATEGORY_WEIGHT": 0.15,
+        "GLOBAL_PRIOR": 4.0,
+        "CATEGORY_PRIOR": 6.0,
+        "BC_PRIOR": 8.0,
+        "SUBJECT_CATEGORY_PRIOR": 12.0,
+        "SALT": "category_logit_subject_plus_global_parism",
+    },
+}
+
+
+def _find_project_dir() -> Path:
+    here = Path.cwd().resolve()
+    candidates = [
+        here,
+        here / "projects" / "predictive_eval_challenge",
+        Path(__file__).resolve().parent,
+    ]
+    for p in candidates:
+        if (p / "codabench_submissions" / "baseline" / "artifacts" / "smoothed_prior.json").exists():
+            return p
+    raise FileNotFoundError(
+        "Could not find projects/predictive_eval_challenge with "
+        "codabench_submissions/baseline/artifacts/smoothed_prior.json."
+    )
+
+
+def _write_zip(src_dir: Path, out_path: Path) -> None:
+    if out_path.exists():
+        out_path.unlink()
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(src_dir.rglob("*")):
+            if path.is_file():
+                zf.write(path, path.relative_to(src_dir))
+
+
+def main() -> None:
+    project = _find_project_dir()
+    sub_root = project / "codabench_submissions"
+    dist = project / "dist"
+    dist.mkdir(parents=True, exist_ok=True)
+
+    artifact = sub_root / "baseline" / "artifacts" / "smoothed_prior.json"
+    if not artifact.exists():
+        raise FileNotFoundError(f"Missing {artifact}")
+
+    print("Creating adaptive logit-offset variants...\n")
+    for name, cfg in VARIANTS.items():
+        dst = sub_root / name
+        if dst.exists():
+            shutil.rmtree(dst)
+        (dst / "artifacts").mkdir(parents=True, exist_ok=True)
+
+        model_code = MODEL_TEMPLATE
+        for key, value in cfg.items():
+            if key == "SALT":
+                continue
+            model_code = model_code.replace(f"__{key}__", repr(float(value)))
+        label_code = LABELING_TEMPLATE.replace("__SALT__", str(cfg["SALT"]))
+
+        (dst / "model.py").write_text(model_code.lstrip(), encoding="utf-8")
+        (dst / "labeling.py").write_text(label_code.lstrip(), encoding="utf-8")
+        (dst / "models.txt").write_text("", encoding="utf-8")
+        shutil.copyfile(artifact, dst / "artifacts" / "smoothed_prior.json")
+
+        zip_path = dist / f"{name}_submission.zip"
+        _write_zip(dst, zip_path)
+        print(f"READY: {zip_path}")
+
+    print("\nUpload once each in this order:")
+    for i, name in enumerate(VARIANTS, start=1):
+        print(f"{i}. {name}_submission.zip")
+
+    print("\nDecision rule:")
+    print("- If any gets -0.59 or -0.58, rerun that exact zip.")
+    print("- If all are worse than -0.60, stop and keep baseline_category_offset/salt10.")
+
+
+if __name__ == "__main__":
+    main()
