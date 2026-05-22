@@ -75,7 +75,7 @@ def _bc_key(row: Mapping[str, object]) -> str:
 
 def _format_item_text(row: Mapping[str, object]) -> str:
     item = str(row.get("item_content", "") or "")[:MAX_ITEM_CHARS]
-    return f"Benchmark: {row.get('benchmark', '')}\\nCondition: {row.get('condition', 'none') or 'none'}\\nItem: {item}"
+    return f"Benchmark: {row.get('benchmark', '')}\nCondition: {row.get('condition', 'none') or 'none'}\nItem: {item}"
 
 PRIOR = json.loads(PRIOR_PATH.read_text()) if PRIOR_PATH.exists() else {"global_mean": 0.6528605818748474}
 RESID = None
@@ -189,7 +189,7 @@ import hashlib
 SALT = "item_residual_modal_salt10_parism"
 
 def acquisition_function(input: dict) -> float:
-    text = "\\n".join([SALT, input.get("benchmark",""), input.get("condition",""), input.get("subject_content",""), input.get("item_content","")])
+    text = "\n".join([SALT, input.get("benchmark",""), input.get("condition",""), input.get("subject_content",""), input.get("item_content","")])
     digest = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
     return float(int(digest[:12], 16) / 16**12)
 '''
@@ -242,14 +242,14 @@ def main() -> None:
         code = MODEL_TEMPLATE.replace("__ETA__", repr(float(eta))).replace("__RESIDUAL_CLIP__", repr(1.5))
         (dst / "model.py").write_text(code.lstrip(), encoding="utf-8")
         (dst / "labeling.py").write_text(LABELING.lstrip(), encoding="utf-8")
-        (dst / "models.txt").write_text(f"{encoder_id}\\n", encoding="utf-8")
+        (dst / "models.txt").write_text(f"{encoder_id}\n", encoding="utf-8")
         shutil.copyfile(prior, dst / "artifacts" / "smoothed_prior.json")
         shutil.copyfile(model, dst / "artifacts" / "item_residual_model.npz")
         zip_path = dist / f"{name}_submission.zip"
         _write_zip(dst, zip_path)
         print(f"READY: {zip_path}")
 
-    print("\\nUpload once each in this order:")
+    print("\nUpload once each in this order:")
     for i, name in enumerate(VARIANTS, start=1):
         print(f"{i}. {name}_submission.zip")
 

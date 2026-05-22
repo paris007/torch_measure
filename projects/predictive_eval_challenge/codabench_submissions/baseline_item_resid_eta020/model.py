@@ -65,7 +65,7 @@ def _bc_key(row: Mapping[str, object]) -> str:
 
 def _format_item_text(row: Mapping[str, object]) -> str:
     item = str(row.get("item_content", "") or "")[:MAX_ITEM_CHARS]
-    return f"Benchmark: {row.get('benchmark', '')}\\nCondition: {row.get('condition', 'none') or 'none'}\\nItem: {item}"
+    return f"Benchmark: {row.get('benchmark', '')}\nCondition: {row.get('condition', 'none') or 'none'}\nItem: {item}"
 
 PRIOR = json.loads(PRIOR_PATH.read_text()) if PRIOR_PATH.exists() else {"global_mean": 0.6528605818748474}
 RESID = None
